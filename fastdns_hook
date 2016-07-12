@@ -1,0 +1,133 @@
+#!/usr/bin/env python2
+import time
+import logging
+import requests
+from dns import resolver
+from urlparse import urljoin
+from akamai.edgegrid import EdgeGridAuth
+
+BASE_URL='https://xxxx-xxxx-xxxx.luna.akamaiapis.net/'
+CLIENT_TOKEN='xxxx-xxxx-xxxx'
+CLIENT_SECRET='AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA'
+ACCESS_TOKEN='xxxx-xxxxxxxxxxxxxxxxxxxxxxxx'
+
+# Use google's resolver directly.
+my_resolver = resolver.Resolver()
+my_resolver.nameservers = ['8.8.8.8', '8.8.4.4']
+
+logger = logging.getLogger(__name__)
+
+class BasedSession(requests.Session):
+    def __init__(self, base_url=None, *args, **kwargs):
+        self.base_url = base_url
+        super(BasedSession, self).__init__(*args, **kwargs)
+
+    def request(self, method, url, *args, **kwargs):
+        url = urljoin(self.base_url, url)
+        return super(BasedSession, self).request(method, url, *args, **kwargs)
+
+class DnsUpdater(object):
+    def __init__(self, base_url, *args, **kwargs):
+        self.log = logging.getLogger('DnsUpdater')
+        if 'max_body' not in kwargs:
+            kwargs['max_body'] = 131072
+
+        self.s = BasedSession(base_url=urljoin(base_url, 'config-dns/v1/'))
+        self.s.auth = EdgeGridAuth(*args, **kwargs)
+
+    def acme_domain(self, domain):
+        return '_acme-challenge.' + domain
+
+    def current_config(self, domain):
+        zone = [None] + domain.split('.')
+        r = None
+
+        while zone and (r is None or r.status_code == 404):
+            zone.pop(0)
+            r = self.s.get('zones/{}'.format('.'.join(zone)))
+
+        if not zone:
+            self.log.warning('Could not find zone matching domain')
+            return None
+
+        obj = r.json()
+        if r.status_code != 200:
+            detail = obj['detail'] if 'detail' in obj else 'Unknown status: {}'.format(r.status_code)
+            self.log.warning(detail)
+            return None
+
+        self.zone = '.'.join(zone)
+        self.name = domain[:-len(self.zone)-1]
+        return obj
+
+    def setup_dns(self, domain, txt_challenge):
+        config = self.current_config(domain)
+        zone = config['zone']
+        soa = zone['soa']
+        soa['serial'] += 1
+
+        txt = zone['txt']
+        txt.append({'active': True,
+                    'ttl': 30,
+                    'name': self.acme_domain(self.name),
+                    'target': txt_challenge})
+
+        r = self.s.post('zones/' + self.zone, json=config)
+        try:
+            r.raise_for_status()
+        except:
+            self.log.fatal('Bad status code on POST: %d', r.status_code)
+            raise
+
+    def wait_for_dns(self, domain, txt_challenge):
+        domain = self.acme_domain(domain)
+        while True:
+            try:
+                for txt in my_resolver.query(domain, 'TXT'):
+                    if txt_challenge in txt.to_text():
+                        return
+            except resolver.NXDOMAIN:
+                pass
+            time.sleep(15)
+
+    def delete_dns(self, domain, txt_challenge):
+        config = self.current_config(domain)
+        zone = config['zone']
+        soa = zone['soa']
+        soa['serial'] += 1
+
+        acme = self.acme_domain(self.name)
+        zone['txt'] = [x for x in zone['txt'] if x['name'] != acme]
+
+        r = self.s.post('zones/' + self.zone, json=config)
+        try:
+            r.raise_for_status()
+        except:
+            self.log.fatal('Bad status code on POST: %d', r.status_code)
+            raise
+
+if __name__ == '__main__':
+    import sys
+    logging.basicConfig()
+
+    try:
+        hook_stage = sys.argv[1]
+        domain = sys.argv[2]
+        txt_challenge = sys.argv[4]
+
+        dns = DnsUpdater(BASE_URL,
+                         client_token=CLIENT_TOKEN,
+                         client_secret=CLIENT_SECRET,
+                         access_token=ACCESS_TOKEN)
+
+        if hook_stage == 'deploy_challenge':
+            print ' + Deploying DNS Challenge...'
+            dns.setup_dns(domain, txt_challenge)
+            print ' + Waiting to propagate...'
+            dns.wait_for_dns(domain, txt_challenge)
+        elif hook_stage == 'clean_challenge':
+            print ' + Cleaning DNS Challenge...'
+            dns.delete_dns(domain, txt_challenge)
+    except Exception as e:
+        logger.exception('Uncaught exception')
+        sys.exit(1)
