@@ -112,11 +112,16 @@ if __name__ == '__main__':
 
     try:
         hook_stage = sys.argv[1]
-        if 'exit_hook' == hook_stage:
-            sys.exit(0)
 
-        domain = sys.argv[2]
-        txt_challenge = sys.argv[4]
+        try:
+            domain = sys.argv[2]
+        except IndexError:
+            domain = None
+
+        try:
+            txt_challenge = sys.argv[4]
+        except IndexError:
+            txt_challenge = None
 
         dns = DnsUpdater(BASE_URL,
                          client_token=CLIENT_TOKEN,
