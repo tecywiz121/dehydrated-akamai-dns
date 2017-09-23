@@ -1,15 +1,39 @@
 #!/usr/bin/env python2
+import os
+import sys
 import time
 import logging
 import requests
 from dns import resolver
 from urlparse import urljoin
 from akamai.edgegrid import EdgeGridAuth
+from ConfigParser import SafeConfigParser as ConfigParser, NoSectionError
 
-BASE_URL='https://xxxx-xxxx-xxxx.luna.akamaiapis.net/'
-CLIENT_TOKEN='xxxx-xxxx-xxxx'
-CLIENT_SECRET='AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA'
-ACCESS_TOKEN='xxxx-xxxxxxxxxxxxxxxxxxxxxxxx'
+
+## Example Configuration
+# [akamai]
+# base_url      = https://xxxx-xxxx-xxxx.luna.akamaiapis.net/
+# client_token  = xxxx-xxxx-xxxx
+# client_secret = AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+# access_token  = xxxx-xxxxxxxxxxxxxxxxxxxxxxxx
+
+
+config = ConfigParser()
+config.read([
+    '/etc/dehydrated-fastdns/credentials.cfg',
+    os.path.expanduser('~/.config/dehydrated-fastdns/credentials.cfg'),
+])
+
+
+try:
+    BASE_URL = config.get('akamai', 'base_url')
+    CLIENT_TOKEN = config.get('akamai', 'client_token')
+    CLIENT_SECRET = config.get('akamai', 'client_secret')
+    ACCESS_TOKEN = config.get('akamai', 'access_token')
+except NoSectionError:
+    logging.error('missing configuration file/section')
+    sys.exit(1)
+
 
 # Use google's resolver directly.
 my_resolver = resolver.Resolver()
@@ -107,7 +131,6 @@ class DnsUpdater(object):
             raise
 
 if __name__ == '__main__':
-    import sys
     logging.basicConfig()
 
     try:
