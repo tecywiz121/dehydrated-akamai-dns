@@ -60,7 +60,10 @@ class DnsUpdater(object):
         self.s.auth = EdgeGridAuth(*args, **kwargs)
 
     def acme_domain(self, domain):
-        return '_acme-challenge.' + domain
+        if domain:
+            return '_acme-challenge.' + domain
+        else:
+            return '_acme-challenge'
 
     def current_config(self, domain):
         zone = [None] + domain.split('.')
